@@ -2,26 +2,22 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy file project và restore các gói NuGet
-COPY ["ComicBackend.WebApi/ComicBackend.WebApi.csproj", "ComicBackend.WebApi/"]
-RUN dotnet restore "ComicBackend.WebApi/ComicBackend.WebApi.csproj"
+# Copy file .csproj từ thư mục gốc vào và restore NuGet
+COPY *.csproj ./
+RUN dotnet restore
 
-# Copy toàn bộ mã nguồn và build
+# Copy toàn bộ mã nguồn còn lại và tiến hành Publish
 COPY . .
-WORKDIR "/src/ComicBackend.WebApi"
-RUN dotnet build "ComicBackend.WebApi.csproj" -c Release -o /app/build
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
 
-# Stage 2: Publish ứng dụng
-FROM build AS publish
-RUN dotnet publish "ComicBackend.WebApi.csproj" -c Release -o /app/publish /p:UseAppHost=false
-
-# Stage 3: Khởi chạy môi trường Runtime nhỏ gọn
+# Stage 2: Khởi chạy môi trường Runtime nhỏ gọn
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+COPY --from=build /app/publish .
 
-# Render tự động cấp phát cổng, ASP.NET Core cần nghe qua cổng PORT của môi trường
+# Cấu hình cổng chạy cho Render
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
-ENTRYPOINT ["dotnet", "ComicBackend.WebApi.dll"]
+# Chạy trực tiếp file dll sinh ra (Docker sẽ tự quét file .dll duy nhất trong thư mục)
+ENTRYPOINT ["sh", "-c", "dotnet $(ls *.dll | head -n 1)"]
