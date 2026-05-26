@@ -1,16 +1,15 @@
-# Stage 1: Build ứng dụng bằng SDK .NET 9.0
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+# Stage 1: Build ứng dụng bằng SDK .NET 10.0
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy toàn bộ mã nguồn từ GitHub vào Docker
 COPY . .
 
-# Tự động tìm kiếm file .csproj bất kể nó nằm ở thư mục con nào và tiến hành Publish
-RUN dotnet publish */*.csproj -c Release -o /app/publish /p:UseAppHost=false || \
-    dotnet publish *.csproj -c Release -o /app/publish /p:UseAppHost=false
+# Tiến hành Publish trực tiếp bằng file dự án WebApi
+RUN dotnet publish "WebApi/WebApi.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-# Stage 2: Môi trường Runtime nhỏ gọn
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+# Stage 2: Môi trường Runtime nhỏ gọn của .NET 10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
@@ -18,5 +17,5 @@ COPY --from=build /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
-# Khởi chạy file .dll chính của Web API
-ENTRYPOINT ["sh", "-c", "dotnet $(ls *.[Ww]eb[Aa]pi.dll 2>/dev/null || ls *.dll | head -n 1)"]
+# Khởi chạy file .dll chính của dự án WebApi
+ENTRYPOINT ["dotnet", "WebApi.dll"]
