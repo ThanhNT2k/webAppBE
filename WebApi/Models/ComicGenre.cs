@@ -6,8 +6,7 @@ namespace ComicBackend.WebApi.Models
     [Table("comic_genres")]
     public class ComicGenre : BaseModel
     {
-        // Supabase-csharp yêu cầu chỉ định PrimaryKey, với bảng composite key ta chỉ định cột đầu tiên
-        [PrimaryKey("comic_id", false)]
+        [Column("comic_id")]
         public long ComicId { get; set; }
 
         [Column("genre_id")]

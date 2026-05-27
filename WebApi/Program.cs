@@ -1,8 +1,12 @@
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Middlewares;
 using Newtonsoft.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
+using ComicBackend.WebApi.Data;
 
 var builder = WebApplication.CreateBuilder(args);
+    builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddControllers()
     .AddNewtonsoftJson(options =>

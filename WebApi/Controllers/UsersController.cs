@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using ComicBackend.WebApi.Attributes;
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
 using static Postgrest.Constants;
@@ -69,8 +70,32 @@ namespace ComicBackend.WebApi.Controllers
             }
         }
 
+        // GET: api/users/profile
+        [HttpGet("profile")]
+        public async Task<IActionResult> GetProfile()
+        {
+            var user = GetCurrentUser();
+            if (user == null) return Unauthorized(new { error = "You must be logged in." });
+
+            try
+            {
+                // Truy vấn bảng 'profiles' trong Supabase để lấy thông tin chi tiết
+                var response = await _supabase.Client
+                    .From<Models.Profile>() // Đảm bảo bạn có Model Profile tương ứng
+                    .Filter(x => x.Id, Operator.Equals, user.Id)
+                    .Single();
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Could not fetch profile: " + ex.Message });
+            }
+        }
+
         // POST: api/users/comment
         [HttpPost("comment")]
+        [AuthorizeRoles("User", "Uploader", "Admin")]
         public async Task<IActionResult> CreateComment([FromBody] CommentRequest request)
         {
             var user = GetCurrentUser();
@@ -119,6 +144,31 @@ namespace ComicBackend.WebApi.Controllers
                 return Ok(new { message = "Reading history logged successfully." });
             }
             catch (Exception ex) 
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        // DELETE: api/users/admin/manage-user/{id}
+        [HttpDelete("admin/manage-user/{id}")]
+        [AuthorizeRoles("Admin")] // CHỈ DUY NHẤT Admin được phép gọi API hủy diệt này
+        public async Task<IActionResult> DeleteUser(string id)
+        {
+            try
+            {
+                // 1. Xóa thông tin Profile ở public schema trước (Do quan hệ khóa ngoại)
+                await _supabase.Client
+                    .From<Profile>()
+                    .Filter(x => x.Id, Operator.Equals, id)
+                    .Delete();
+
+                // 2. Lưu ý: Để xóa tài khoản tận gốc trong auth.users của Supabase, 
+                // thông thường cần dùng bọc Admin API của GoTrue. 
+                // Ở đây chúng ta xóa bản ghi ở public để đảm bảo đồng bộ dữ liệu trước.
+        
+                return Ok(new { message = $"User with ID {id} has been successfully deleted by Admin." });
+            }
+            catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message });
             }

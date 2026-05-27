@@ -1,38 +1,31 @@
-using Postgrest.Attributes;
-using Postgrest.Models;
 using System;
+using Postgrest.Attributes; // Bắt buộc phải có
 
 namespace ComicBackend.WebApi.Models
 {
-    [Table("comics")]
-    public class Comic : BaseModel
+    [Postgrest.Attributes.Table("comics")] // Ép Supabase SDK gọi trúng bảng "comics" viết thường
+    public class Comic : Postgrest.Models.BaseModel
     {
-        [PrimaryKey("id", true)] // BIGSERIAL tự động tăng
-        public long Id { get; set; }
+        [PrimaryKey("id", false)]
+        public int Id { get; set; }
 
         [Column("title")]
-        public string Title { get; set; } = null!;
+        public string Title { get; set; } = string.Empty;
 
         [Column("slug")]
-        public string Slug { get; set; } = null!;
-
-        [Column("cover_url")]
-        public string? CoverUrl { get; set; }
-
-        [Column("description")]
-        public string? Description { get; set; }
+        public string Slug { get; set; } = string.Empty;
 
         [Column("author")]
-        public string? Author { get; set; }
+        public string Author { get; set; } = string.Empty;
 
         [Column("status")]
         public string Status { get; set; } = "Ongoing";
 
-        [Column("total_views")]
-        public long TotalViews { get; set; }
+        [Column("cover_url")]
+        public string? CoverUrl { get; set; }
 
-        [Column("uploader_id")]
-        public string? UploaderId { get; set; }
+        [Column("views")]
+        public int TotalViews { get; set; } = 0;
 
         [Column("created_at")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

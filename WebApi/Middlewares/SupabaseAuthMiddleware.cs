@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using ComicBackend.WebApi.Services;
+using ComicBackend.WebApi.Models;
+using Postgrest;
 using System.Threading.Tasks;
 
 namespace ComicBackend.WebApi.Middlewares
@@ -19,21 +21,31 @@ namespace ComicBackend.WebApi.Middlewares
 
             if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
             {
-                var token = authHeader.Substring("Bearer ".Length).Trim();
+                var token = authHeader.Substring(7);
                 try
                 {
-                    // Đưa token vào Supabase client để lấy thông tin user hiện tại
-                    var user = await supabaseService.Client.Auth.GetUser(token);
+                    // 1. Xác thực token với GoTrue Supabase
+                    var authState = await supabaseService.Client.Auth.GetUser(token);
                     
-                    if (user != null)
+                    if (authState != null)
                     {
-                        // Lưu thông tin user id vào Items của HttpContext để sử dụng ở Controller
-                        context.Items["User"] = user;
+                        context.Items["User"] = authState;
+
+                        // 2. Lấy Role của User từ bảng public.profiles
+                        var profileResponse = await supabaseService.Client
+                            .From<Profile>()
+                            .Filter(x => x.Id, Constants.Operator.Equals, authState.Id)
+                            .Get();
+
+                        var profile = profileResponse.Models.FirstOrDefault();
+                        
+                        // 3. Lưu Role vào HttpContext để các Custom Attribute kiểm tra
+                        context.Items["UserRole"] = profile?.Role ?? "User";
                     }
                 }
                 catch
                 {
-                    // Token không hợp lệ hoặc hết hạn - Bỏ qua để controller tự xử lý 401 nếu cần
+                    // Token lỗi hoặc hết hạn -> Bỏ qua, để Attribute tự xử lý Unauthorized
                 }
             }
 

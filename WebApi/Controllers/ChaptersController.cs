@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
-using static Postgrest.Constants;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace ComicBackend.WebApi.Controllers
 {
@@ -9,50 +12,64 @@ namespace ComicBackend.WebApi.Controllers
     [Route("api/[controller]")]
     public class ChaptersController : ControllerBase
     {
-        private readonly SupabaseService _supabase;
+        private readonly SupabaseService _supabaseService;
 
-        public ChaptersController(SupabaseService supabase)
+        public ChaptersController(SupabaseService supabaseService)
         {
-            _supabase = supabase;
+            _supabaseService = supabaseService;
         }
 
-        // GET: api/chapters/comic/{comicId}
+        // =========================================================================
+        // 1. API LẤY DANH SÁCH CHƯƠNG CỦA MỘT BỘ TRUYỆN (Theo ComicID)
+        // =========================================================================
+        // GET: api/chapters/comic/5
+        // Đồng bộ hoàn hảo với hàm getChaptersByComic(comicId) ở file api.js
         [HttpGet("comic/{comicId}")]
         public async Task<IActionResult> GetChaptersByComic(long comicId)
         {
             try
             {
-                var response = await _supabase.Client
+                // Truy vấn danh sách chương thuộc về truyện và sắp xếp chương mới nhất lên đầu
+                var response = await _supabaseService.Client
                     .From<Chapter>()
-                    .Filter(x => x.ComicId, Operator.Equals, comicId)
-                    .Order(x => x.ChapterNumber, Ordering.Descending)
+                    .Where(ch => ch.ComicId == comicId)
+                    .Order("chapter_number", Postgrest.Constants.Ordering.Descending) 
                     .Get();
 
                 return Ok(response.Models);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { message = "Lỗi hệ thống khi lấy danh sách chương truyện", error = ex.Message });
             }
         }
 
-        // GET: api/chapters/{chapterId}/images
-        [HttpGet("{chapterId}/images")]
-        public async Task<IActionResult> GetChapterImages(long chapterId)
+        // =========================================================================
+        // 2. API LẤY CHI TIẾT NỘI DUNG ẢNH CỦA MỘT CHƯƠNG (Theo ChapterID)
+        // =========================================================================
+        // GET: api/chapters/12
+        // Đồng bộ hoàn hảo với hàm getChapterImages(chapterId) ở file api.js
+        [HttpGet("{chapterId}")]
+        public async Task<IActionResult> GetChapterDetails(long chapterId)
         {
             try
             {
-                var response = await _supabase.Client
-                    .From<ChapterImage>()
-                    .Filter(x => x.ChapterId, Operator.Equals, chapterId)
-                    .Order(x => x.PageNumber, Ordering.Ascending)
-                    .Get();
+                var response = await _supabaseService.Client
+                    .From<Chapter>()
+                    .Where(ch => ch.Id == chapterId)
+                    .Single(); // Chỉ lấy duy nhất chương đang đọc
 
-                return Ok(response.Models);
+                if (response == null)
+                {
+                    return NotFound(new { message = "Không tìm thấy nội dung chương truyện này!" });
+                }
+
+                // Trả về toàn bộ object chương truyện chứa mảng dữ liệu "images" để Front-end render ảnh
+                return Ok(response);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { message = "Lỗi hệ thống khi lấy nội dung chương truyện", error = ex.Message });
             }
         }
     }
