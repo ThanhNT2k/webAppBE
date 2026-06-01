@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System;
 
 namespace ComicBackend.WebApi.Controllers
 {
@@ -9,59 +10,82 @@ namespace ComicBackend.WebApi.Controllers
     {
         private readonly TokenService _tokenService;
 
-        // Nếu bạn cần dùng DB Postgres sau này, hãy inject ApplicationDbContext vào đây
         public AuthController(TokenService tokenService)
         {
             _tokenService = tokenService;
         }
 
-        // 1. BỔ SUNG: API ĐĂNG KÝ (Sign Up) -> POST: api/auth/register
+        // 1. CẬP NHẬT: API ĐĂNG KÝ (Chống sập 500 & Map an toàn) -> POST: api/auth/register
         [HttpPost("register")]
         public IActionResult Register([FromBody] RegisterModel model)
         {
-            // Thực tế: Kiểm tra DB xem email/username đã tồn tại chưa, mã hóa password rồi lưu vào DB.
-            // Ví dụ mock tạm thời để Frontend test thông luồng thành công:
-            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
+            try
             {
-                return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin!" });
-            }
-
-            // Giả lập trả về dữ liệu chuẩn cấu trúc mà file auth.js của bạn đang đợi:
-            // auth.js dòng 38: mong muốn nhận về response có { token, user: { role } }
-            var mockToken = _tokenService.GenerateToken(model.Username ?? model.Email, "User");
-
-            return Ok(new
-            {
-                token = mockToken,
-                user = new
+                // Kiểm tra an toàn để không bao giờ bị lỗi NullReferenceException
+                if (model == null || string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
                 {
-                    username = model.Username ?? model.Email,
-                    email = model.Email,
-                    role = "User"
+                    return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin Email và Mật khẩu!" });
                 }
-            });
+
+                // Lấy tên hiển thị an toàn (nếu username trống thì lấy phần trước dấu @ của email)
+                string safeUsername = !string.IsNullOrEmpty(model.Username) 
+                    ? model.Username 
+                    : model.Email.Split('@')[0];
+
+                // Sinh mock token thông luồng
+                var mockToken = _tokenService.GenerateToken(safeUsername, "User");
+
+                // Trả về đúng định dạng JSON viết thường/hoa linh hoạt mà Frontend (auth.js) đang đợi
+                return Ok(new
+                {
+                    token = mockToken,
+                    user = new
+                    {
+                        username = safeUsername,
+                        email = model.Email,
+                        role = "User"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                // Nếu có lỗi phát sinh trong _tokenService, server vẫn trả về phản hồi 500 kèm CORS hợp lệ thay vì sập ngầm
+                return StatusCode(500, new { error = $"Lỗi xử lý Đăng ký trên Server: {ex.Message}" });
+            }
         }
 
-        // 2. CẬP NHẬT: API ĐĂNG NHẬP (Sign In) -> POST: api/auth/login
+        // 2. CẬP NHẬT: API ĐĂNG NHẬP -> POST: api/auth/login
         [HttpPost("login")]
         public IActionResult Login([FromBody] LoginModel model)
         {
-            // Chấp nhận đăng nhập bằng cả username lẫn email từ frontend gửi về
-            var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username : model.Email;
-
-            // Đoạn này dùng để demo, thực tế bạn phải kiểm tra DB
-            if ((identifier == "admin" || identifier == "admin@gmail.com") && model.Password == "password123")
+            try
             {
-                var token = _tokenService.GenerateToken(identifier, "Admin");
-                
-                // Trả về đúng cấu trúc file auth.js yêu cầu (gồm token và object user)
-                return Ok(new { 
-                    Token = token,
-                    User = new { username = identifier, role = "Admin" }
-                });
-            }
+                if (model == null || (string.IsNullOrEmpty(model.Username) && string.IsNullOrEmpty(model.Email)) || string.IsNullOrEmpty(model.Password))
+                {
+                    return BadRequest(new { error = "Vui lòng điền tài khoản và mật khẩu!" });
+                }
 
-            return Unauthorized(new { error = "Sai tài khoản hoặc mật khẩu" });
+                // Chấp nhận đăng nhập bằng cả username lẫn email từ frontend gửi về
+                var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username : model.Email;
+
+                // Đoạn này dùng để demo test luồng admin mặc định
+                if ((identifier == "admin" || identifier == "admin@gmail.com") && model.Password == "password123")
+                {
+                    var token = _tokenService.GenerateToken(identifier, "Admin");
+                    
+                    return Ok(new { 
+                        token = token, // Viết thường đồng bộ cho Frontend dễ đọc
+                        user = new { username = identifier, role = "Admin" }
+                    });
+                }
+
+                // Trả về BadRequest hoặc Unauthorized kèm JSON object thay vì Text thuần để bảo vệ Frontend khỏi crash
+                return BadRequest(new { error = "Sai tài khoản hoặc mật khẩu" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = $"Lỗi xử lý Đăng nhập trên Server: {ex.Message}" });
+            }
         }
 
         // API yêu cầu phải có Token hợp lệ mới truy cập được
@@ -81,7 +105,7 @@ namespace ComicBackend.WebApi.Controllers
         }
     }
 
-    // --- Cấu trúc Models đồng bộ với JSON từ Frontend gửi lên ---
+    // --- Cấu trúc Models bổ sung dữ liệu trống phòng lỗi mapping ---
     public class RegisterModel
     {
         public string? Username { get; set; }
@@ -92,7 +116,7 @@ namespace ComicBackend.WebApi.Controllers
     public class LoginModel
     {
         public string? Username { get; set; }
-        public string? Email { get; set; }     // Bổ sung thêm trường Email phòng khi Frontend gửi email thay vì username
+        public string? Email { get; set; }
         public string Password { get; set; } = string.Empty;
     }
 }
