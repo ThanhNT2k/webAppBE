@@ -21,21 +21,44 @@ namespace ComicBackend.WebApi.Controllers
         {
             try
             {
-                // Kiểm tra an toàn để không bao giờ bị lỗi NullReferenceException
-                if (model == null || string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
+                // 1. Kiểm tra tuyệt đối an toàn cho việc nhận dữ liệu từ Frontend
+                if (model == null)
+                {
+                    return BadRequest(new { error = "Dữ liệu gửi lên bị rỗng (null)!" });
+                }
+
+                if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
                 {
                     return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin Email và Mật khẩu!" });
                 }
 
-                // Lấy tên hiển thị an toàn (nếu username trống thì lấy phần trước dấu @ của email)
-                string safeUsername = !string.IsNullOrEmpty(model.Username) 
-                    ? model.Username 
-                    : model.Email.Split('@')[0];
+                // 2. Tạo username an toàn, xử lý triệt để trường hợp Email null hoặc rỗng
+                string safeUsername = "User_" + Guid.NewGuid().ToString().Substring(0, 8);
+                if (!string.IsNullOrEmpty(model.Username))
+                {
+                    safeUsername = model.Username;
+                }
+                else if (!string.IsNullOrEmpty(model.Email) && model.Email.Contains("@"))
+                {
+                    safeUsername = model.Email.Split('@')[0];
+                }
 
-                // Sinh mock token thông luồng
-                var mockToken = _tokenService.GenerateToken(safeUsername, "User");
+                // 3. Gọi hàm sinh Token và bọc lỗi riêng cho TokenService
+                string mockToken = string.Empty;
+                try 
+                {
+                    if (_tokenService == null)
+                    {
+                        return StatusCode(500, new { error = "Hệ thống TokenService chưa được khởi tạo (Null Injection)!" });
+                    }
+                    mockToken = _tokenService.GenerateToken(safeUsername, "User");
+                }
+                catch (Exception tokenEx)
+                {
+                    return StatusCode(500, new { error = $"Lỗi sập tại TokenService: {tokenEx.Message}. Hãy kiểm tra xem đã cấu hình JWT Secret Key trên Render chưa!" });
+                }
 
-                // Trả về đúng định dạng JSON viết thường/hoa linh hoạt mà Frontend (auth.js) đang đợi
+                // 4. Trả về kết quả thành công cho Frontend
                 return Ok(new
                 {
                     token = mockToken,
@@ -49,8 +72,7 @@ namespace ComicBackend.WebApi.Controllers
             }
             catch (Exception ex)
             {
-                // Nếu có lỗi phát sinh trong _tokenService, server vẫn trả về phản hồi 500 kèm CORS hợp lệ thay vì sập ngầm
-                return StatusCode(500, new { error = $"Lỗi xử lý Đăng ký trên Server: {ex.Message}" });
+                return StatusCode(500, new { error = $"Lỗi hệ thống tổng quát: {ex.Message}" });
             }
         }
 
