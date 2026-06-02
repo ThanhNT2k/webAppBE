@@ -76,5 +76,23 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { status = "OK", message = "C# ASP.NET Core Backend is running perfectly!" }));
+// Đặt đoạn này ngay trước app.Run(); trong file Program.cs
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>(); // Thay bằng tên DbContext của bạn
+        if (context.Database.GetPendingMigrations().Any())
+        {
+            context.Database.Migrate();
+            Console.WriteLine("-> Tự động khởi tạo và cập nhật cấu trúc bảng thành công trên Supabase!");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"-> Lỗi tự động cập nhật Database: {ex.Message}");
+    }
+}
 
 app.Run();
