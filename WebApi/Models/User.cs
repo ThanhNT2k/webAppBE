@@ -1,13 +1,14 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Postgrest.Models;
 
 namespace ComicBackend.WebApi.Models
 {
-    [Table("profiles")] // Khớp với tên bảng viết thường số nhiều trong ảnh
-    public class User
+    [Postgrest.Attributes.Table("profiles")]
+    public class User : BaseModel
     {
-        [Key]
+        [Postgrest.Attributes.PrimaryKey("id")]
         [Column("id")]
         public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -27,7 +28,6 @@ namespace ComicBackend.WebApi.Models
 
         [Column("updated_at")]
         public DateTime? UpdatedAt { get; set; } = DateTime.UtcNow;
-
         
         [Column("email")]
         public string Email { get; set; } = string.Empty;

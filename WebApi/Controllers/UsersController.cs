@@ -26,6 +26,44 @@ namespace ComicBackend.WebApi.Controllers
             return HttpContext.Items["User"] as Supabase.Gotrue.User;
         }
 
+        // GET: api/users/check-admin?id=chuoi-uuid-cua-user
+        [HttpGet("check-admin")]
+        public async Task<IActionResult> CheckAdminRole([FromQuery] string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) 
+                return BadRequest(new { error = "User ID không được để trống." });
+
+            // 🌟 ÉP KIỂU: Chuyển chuỗi text ID sang kiểu Guid tương thích với Model User
+            if (!Guid.TryParse(id.Trim(), out Guid userGuid))
+            {
+                return BadRequest(new { error = "Định dạng User ID không hợp lệ (Phải là chuỗi GUID)." });
+            }
+
+            try
+            {
+                var response = await _supabase.Client
+                    .From<Models.User>()
+                    .Filter(x => x.Id, Operator.Equals, userGuid) // 🌟 Đã khớp kiểu dữ liệu Guid
+                    .Get();
+
+                var userProfile = response.Models.FirstOrDefault();
+
+                if (userProfile == null)
+                {
+                    return NotFound(new { error = "Không tìm thấy thông tin tài khoản." });
+                }
+
+                return Ok(new {
+                    success = true,
+                    role = userProfile.Role?.ToLower().Trim()
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Lỗi kiểm tra quyền: " + ex.Message });
+            }
+        }
+
         // POST: api/users/follow
         [HttpPost("follow")]
         public async Task<IActionResult> ToggleFollow([FromBody] FollowRequest request)
@@ -35,7 +73,6 @@ namespace ComicBackend.WebApi.Controllers
 
             try
             {
-                // Dùng .Get() kết hợp với Models.FirstOrDefault() để thay thế cho MaybeSingle()
                 var response = await _supabase.Client
                     .From<Follow>()
                     .Filter(x => x.UserId!, Operator.Equals, user.Id)
@@ -46,13 +83,11 @@ namespace ComicBackend.WebApi.Controllers
 
                 if (existing != null)
                 {
-                    // Đã theo dõi -> Tiến hành hủy theo dõi (Unfollow)
                     await _supabase.Client.From<Follow>().Delete(existing);
                     return Ok(new { status = "unfollowed", message = "Unfollowed successfully." });
                 }
                 else
                 {
-                    // Chưa theo dõi -> Tiến hành thêm mới (Follow)
                     var newFollow = new Follow
                     {
                         UserId = user.Id!,
@@ -80,10 +115,14 @@ namespace ComicBackend.WebApi.Controllers
 
             try
             {
-                // Truy vấn bảng 'profiles' trong Supabase để lấy thông tin chi tiết
+                if (!Guid.TryParse(user.Id, out Guid userGuid))
+                {
+                    return BadRequest(new { error = "Mã định danh User Auth không đúng định dạng GUID." });
+                }
+
                 var response = await _supabase.Client
-                    .From<Models.Profile>() // Đảm bảo bạn có Model Profile tương ứng
-                    .Filter(x => x.Id, Operator.Equals, user.Id)
+                    .From<Models.User>()
+                    .Filter(x => x.Id, Operator.Equals, userGuid)
                     .Single();
 
                 return Ok(response);
@@ -152,20 +191,20 @@ namespace ComicBackend.WebApi.Controllers
 
         // DELETE: api/users/admin/manage-user/{id}
         [HttpDelete("admin/manage-user/{id}")]
-        [AuthorizeRoles("Admin")] // CHỈ DUY NHẤT Admin được phép gọi API hủy diệt này
+        [AuthorizeRoles("Admin")]
         public async Task<IActionResult> DeleteUser(string id)
         {
+            if (!Guid.TryParse(id, out Guid userGuid))
+            {
+                return BadRequest(new { error = "ID người dùng cần xóa không hợp lệ." });
+            }
+
             try
             {
-                // 1. Xóa thông tin Profile ở public schema trước (Do quan hệ khóa ngoại)
                 await _supabase.Client
-                    .From<Profile>()
-                    .Filter(x => x.Id, Operator.Equals, id)
+                    .From<Models.User>()
+                    .Filter(x => x.Id, Operator.Equals, userGuid)
                     .Delete();
-
-                // 2. Lưu ý: Để xóa tài khoản tận gốc trong auth.users của Supabase, 
-                // thông thường cần dùng bọc Admin API của GoTrue. 
-                // Ở đây chúng ta xóa bản ghi ở public để đảm bảo đồng bộ dữ liệu trước.
         
                 return Ok(new { message = $"User with ID {id} has been successfully deleted by Admin." });
             }
