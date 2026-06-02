@@ -4,12 +4,12 @@ namespace ComicBackend.WebApi.Services
 {
     public class SupabaseService
     {
-        public Client Client { get; }
+        private readonly Client _client;
 
         public SupabaseService(IConfiguration configuration)
         {
             var url = configuration["Supabase:Url"];
-            var key = configuration["Supabase:AnonKey"];
+            var key = configuration["Supabase:Key"];
 
             var options = new SupabaseOptions
             {
@@ -17,8 +17,11 @@ namespace ComicBackend.WebApi.Services
                 AutoConnectRealtime = true
             };
 
-            Client = new Client(url, key, options);
-            Client.InitializeAsync().Wait();
+            // Khởi tạo client
+            _client = new Client(url, key, options);
         }
+
+        // Cung cấp một property để các Controller khác sử dụng
+        public Client Client => _client;
     }
 }

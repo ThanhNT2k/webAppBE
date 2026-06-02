@@ -2,66 +2,52 @@ using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Middlewares;
 using Microsoft.EntityFrameworkCore;
 using ComicBackend.WebApi.Data;
-using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Dịch vụ cơ bản
-builder.Services.AddScoped<TokenService>();
+// 1. Cấu hình Supabase (Service quan trọng nhất)
+builder.Services.AddSingleton<SupabaseService>();
+
+// 2. Database & Auth
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// 2. JWT Setup với kiểm tra null an toàn
-var jwtSettings = builder.Configuration.GetSection("Jwt");
-var secretKey = jwtSettings["Secret"] ?? throw new InvalidOperationException("JWT Secret is missing");
-
+// 3. JWT Setup (Giữ nguyên nếu bạn vẫn muốn dùng JWT cục bộ)
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey))
-    };
-});
+    .AddJwtBearer(options => {
+        options.TokenValidationParameters = new TokenValidationParameters {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"])),
+            ValidateIssuer = false, // Supabase quản lý token, nên để false cho dễ quản lý
+            ValidateAudience = false
+        };
+    });
 
 builder.Services.AddControllers()
-    .AddNewtonsoftJson(options =>
-    {
-        options.SerializerSettings.ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver();
+    .AddNewtonsoftJson(options => {
         options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
     });
 
-builder.Services.AddSingleton<SupabaseService>();
+// 4. CORS
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 });
 
 var app = builder.Build();
 
-// 3. Pipeline
+// 5. Middleware Pipeline
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseMiddleware<SupabaseAuthMiddleware>(); // Đảm bảo Middleware này đã được sửa dùng User thay vì Profile
+
+// Chỗ này quan trọng: Middleware này phải xử lý được User từ Supabase mà không cần class Profile cũ
+app.UseAuthentication(); 
+app.UseMiddleware<SupabaseAuthMiddleware>(); 
 app.UseAuthorization();
+
 app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "OK" }));
-
-// 4. Migration tự động
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    if (db.Database.GetPendingMigrations().Any()) {
-        db.Database.Migrate();
-    }
-}
 
 app.Run();

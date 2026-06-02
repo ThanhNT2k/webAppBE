@@ -1,10 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
-using System;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Text.Json.Serialization;
 using Supabase.Gotrue;
 
 namespace ComicBackend.WebApi.Controllers
@@ -14,88 +10,49 @@ namespace ComicBackend.WebApi.Controllers
     public class AuthController : ControllerBase
     {
         private readonly SupabaseService _supabase;
-        private readonly TokenService _tokenService;
 
-        public AuthController(SupabaseService supabase, TokenService tokenService)
-        {
-            _supabase = supabase;
-            _tokenService = tokenService;
-        }
+        public AuthController(SupabaseService supabase) => _supabase = supabase;
 
-        // 1. API ĐĂNG KÝ
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterModel model)
+        public async Task<IActionResult> Register([FromBody] RegisterRequest req)
         {
-            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
-                return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin!" });
+            var response = await _supabase.Client.Auth.SignUp(req.Email, req.Password, new SignUpOptions {
+                Data = new Dictionary<string, object> { { "username", req.Username ?? req.Email.Split('@')[0] } }
+            });
 
-            try
-            {
-                var authResponse = await _supabase.Client.Auth.SignUp(model.Email, model.Password, new SignUpOptions {
-                    Data = new Dictionary<string, object> {
-                        { "username", model.Username ?? model.Email.Split('@')[0] }
-                    }
-                });
-
-                if (authResponse?.User == null) {
-                    return BadRequest(new { error = "Đăng ký thất bại, vui lòng kiểm tra lại Email hoặc Mật khẩu." });
-                }
-                
-                return Ok(new { message = "Đăng ký thành công!" });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = ex.Message });
-            }
+            if (response.Error != null) return BadRequest(new { error = response.Error.Message });
+            
+            return Ok(new { message = "Đăng ký thành công! Vui lòng kiểm tra email (nếu cần)." });
         }
 
-        // 2. API ĐĂNG NHẬP
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginModel model)
+        public async Task<IActionResult> Login([FromBody] LoginRequest req)
         {
-            // Kiểm tra dữ liệu đầu vào
-            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
-                return BadRequest(new { error = "Email và Mật khẩu không được để trống!" });
-
             try
             {
-                var response = await _supabase.Client.Auth.SignIn(model.Email, model.Password);
+                var response = await _supabase.Client.Auth.SignIn(req.Email, req.Password);
 
-                if (response?.User == null) {
-                    return BadRequest(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
-                }
+                if (response == null)
+                    return Unauthorized(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
 
-                var token = _tokenService.GenerateToken(response.User.Email, "user");
-                
-                return Ok(new { 
-                    token = token,
-                    user = new { 
-                        id = response.User.Id, 
-                        email = response.User.Email, 
-                        role = "user" 
-                    }
+                if (response.Error != null)
+                    return Unauthorized(new { error = response.Error.Message });
+
+                if (response.User == null)
+                    return Unauthorized(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
+
+                var accessToken = response.Session?.AccessToken;
+
+                return Ok(new
+                {
+                    token = accessToken,
+                    user = new { id = response.User.Id, email = response.User.Email }
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = "Lỗi server: " + ex.Message });
+                return BadRequest(new { error = ex.Message });
             }
         }
-    }
-
-    public class RegisterModel 
-    { 
-        public string? Username { get; set; } 
-        public string Email { get; set; } = string.Empty; 
-        public string Password { get; set; } = string.Empty; 
-    }
-
-    public class LoginModel 
-    { 
-        [JsonPropertyName("email")]
-        public string Email { get; set; } = string.Empty; 
-        
-        [JsonPropertyName("password")]
-        public string Password { get; set; } = string.Empty; 
     }
 }
