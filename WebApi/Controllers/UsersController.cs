@@ -72,6 +72,7 @@ namespace ComicBackend.WebApi.Controllers
 
         // GET: api/users/profile
         [HttpGet("profile")]
+        [AuthorizeRoles("User", "Uploader", "Admin")]
         public async Task<IActionResult> GetProfile()
         {
             var user = GetCurrentUser();
