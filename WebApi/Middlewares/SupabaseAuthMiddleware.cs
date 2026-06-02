@@ -3,7 +3,7 @@ using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
 using Postgrest;
 using System.Threading.Tasks;
-using System.Linq; // 🌟 Thêm thư viện này để sử dụng FirstOrDefault()
+
 
 namespace ComicBackend.WebApi.Middlewares
 {
@@ -26,28 +26,27 @@ namespace ComicBackend.WebApi.Middlewares
                 try
                 {
                     // 1. Xác thực token với GoTrue Supabase
-                    var user = await supabaseService.Client.Auth.GetUser(token);
+                    var authState = await supabaseService.Client.Auth.GetUser(token);
                     
-                    if (user != null)
+                    if (authState != null)
                     {
-                        context.Items["User"] = user;
+                        context.Items["User"] = authState;
 
-                        // 2. Lấy Role của User từ bảng public.profiles thông qua Model User
-                        // Sử dụng Guid.Parse nếu Id trong authState là string
+                        // 2. Lấy Role của User từ bảng public.profiles
                         var profileResponse = await supabaseService.Client
                             .From<User>()
-                            .Filter(x => x.Id, Constants.Operator.Equals, System.Guid.Parse(user.Id))
+                            .Filter(x => x.Id, Constants.Operator.Equals, authState.Id)
                             .Get();
 
-                        var userProfile = profileResponse.Models.FirstOrDefault();
+                        var profile = profileResponse.Models.FirstOrDefault();
                         
-                        // 3. Lưu Role vào HttpContext
-                        context.Items["UserRole"] = userProfile?.Role ?? "User";
+                        // 3. Lưu Role vào HttpContext để các Custom Attribute kiểm tra
+                        context.Items["UserRole"] = profile?.Role ?? "User";
                     }
                 }
                 catch
                 {
-                    // Token lỗi hoặc hết hạn -> Bỏ qua
+                    // Token lỗi hoặc hết hạn -> Bỏ qua, để Attribute tự xử lý Unauthorized
                 }
             }
 

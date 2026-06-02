@@ -41,24 +41,24 @@ namespace ComicBackend.WebApi.Controllers
 
                 string hashedPassword = BCrypt.Net.BCrypt.HashPassword(model.Password);
 
-                var newUser = new User
-                {
-                    Id = Guid.NewGuid(),
-                    DisplayName = model.Username ?? model.Email.Split('@')[0],
-                    Email = model.Email.ToLower(),
-                    PasswordHash = hashedPassword,
-                    Role = "user",
-                    UpdatedAt = DateTime.UtcNow
-                };
+                // var newUser = new User
+                // {
+                //     Id = Guid.NewGuid(),
+                //     DisplayName = model.Username ?? model.Email.Split('@')[0],
+                //     Email = model.Email.ToLower(),
+                //     PasswordHash = hashedPassword,
+                //     Role = "user",
+                //     UpdatedAt = DateTime.UtcNow
+                // };
 
-                await _supabase.Client.From<User>().Insert(newUser);
+                // await _supabase.Client.From<User>().Insert(newUser);
 
-                string token = _tokenService.GenerateToken(newUser.DisplayName, newUser.Role);
+                // string token = _tokenService.GenerateToken(newUser.DisplayName, newUser.Role);
 
                 return Ok(new {
-                    token = token,
-                    user = new { username = newUser.DisplayName, email = newUser.Email, role = newUser.Role }
-                });
+                    // token = token,
+                    message = "Đăng ký thành công."
+            });
             }
             catch (Exception ex)
             {
