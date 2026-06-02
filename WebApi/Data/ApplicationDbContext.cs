@@ -5,10 +5,8 @@ namespace ComicBackend.WebApi.Data
 {
     public class ApplicationDbContext : DbContext
     {
-        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
-        {
-        }
-
+        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options) {}
+        public DbSet<User> Profiles { get; set; }
         public DbSet<Genre> Genres { get; set; }
         public DbSet<Comic> Comics { get; set; }
 
@@ -16,6 +14,8 @@ namespace ComicBackend.WebApi.Data
         {
             base.OnModelCreating(modelBuilder);
 
+            modelBuilder.Entity<User>().ToTable("profiles");
+            modelBuilder.Entity<User>().HasIndex(u => u.Email).IsUnique();
             // 1. Loại bỏ cấu hình ClientOptions của Postgrest
             modelBuilder.Ignore<Postgrest.ClientOptions>();
 

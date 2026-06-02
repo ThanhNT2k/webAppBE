@@ -1,6 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using ComicBackend.WebApi.Data;
+using ComicBackend.WebApi.Models;
 using System;
+using System.Threading.Tasks;
 
 namespace ComicBackend.WebApi.Controllers
 {
@@ -9,19 +13,22 @@ namespace ComicBackend.WebApi.Controllers
     public class AuthController : ControllerBase
     {
         private readonly TokenService _tokenService;
+        private readonly ApplicationDbContext _context; // Khai báo DbContext
 
-        public AuthController(TokenService tokenService)
+        // Inject cả TokenService và ApplicationDbContext vào đây
+        public AuthController(TokenService tokenService, ApplicationDbContext context)
         {
             _tokenService = tokenService;
+            _context = context;
         }
 
-        // 1. CẬP NHẬT: API ĐĂNG KÝ (Chống sập 500 & Map an toàn) -> POST: api/auth/register
+        // 1. API ĐĂNG KÝ THẬT -> Ghi vào bảng profiles trong DB
         [HttpPost("register")]
-        public IActionResult Register([FromBody] RegisterModel model)
+        public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
             try
             {
-                // 1. Kiểm tra tuyệt đối an toàn cho việc nhận dữ liệu từ Frontend
+                // 1. Kiểm tra dữ liệu đầu vào từ Frontend
                 if (model == null)
                 {
                     return BadRequest(new { error = "Dữ liệu gửi lên bị rỗng (null)!" });
@@ -32,81 +39,101 @@ namespace ComicBackend.WebApi.Controllers
                     return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin Email và Mật khẩu!" });
                 }
 
-                // 2. Tạo username an toàn, xử lý triệt để trường hợp Email null hoặc rỗng
-                string safeUsername = "User_" + Guid.NewGuid().ToString().Substring(0, 8);
-                if (!string.IsNullOrEmpty(model.Username))
+                // Xử lý display_name an toàn nếu frontend gửi trống
+                string safeDisplayName = !string.IsNullOrEmpty(model.Username) 
+                    ? model.Username 
+                    : model.Email.Split('@')[0];
+
+                // 2. Kiểm tra trùng lặp Email hoặc DisplayName trong bảng profiles
+                if (await _context.Profiles.AnyAsync(p => p.Email == model.Email.ToLower()))
                 {
-                    safeUsername = model.Username;
+                    return BadRequest(new { error = "Email này đã được đăng ký sử dụng!" });
                 }
-                else if (!string.IsNullOrEmpty(model.Email) && model.Email.Contains("@"))
+                if (await _context.Profiles.AnyAsync(p => p.DisplayName == safeDisplayName))
                 {
-                    safeUsername = model.Email.Split('@')[0];
+                    return BadRequest(new { error = "Tên hiển thị (Username) này đã tồn tại!" });
                 }
 
-                // 3. Gọi hàm sinh Token và bọc lỗi riêng cho TokenService
+                // 3. Mã hóa mật khẩu bảo mật (Cần cài package: BCrypt.Net-Next)
+                string hashedPassword = BCrypt.Net.BCrypt.HashPassword(model.Password);
+
+                // 4. Khởi tạo Object User khớp với cấu trúc bảng profiles thực tế
+                var newProfile = new User
+                {
+                    Id = Guid.NewGuid(), // Sinh chuỗi UUID mới hoàn toàn cho Postgres
+                    DisplayName = safeDisplayName,
+                    Email = model.Email.ToLower(),
+                    PasswordHash = hashedPassword,
+                    Role = "User", // Mặc định gán Role là User
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                // Lưu thực tế xuống Database
+                _context.Profiles.Add(newProfile);
+                await _context.SaveChangesAsync();
+
+                // 5. Sinh mã Token từ DisplayName và Role thật vừa tạo
                 string mockToken = string.Empty;
                 try 
                 {
-                    if (_tokenService == null)
-                    {
-                        return StatusCode(500, new { error = "Hệ thống TokenService chưa được khởi tạo (Null Injection)!" });
-                    }
-                    mockToken = _tokenService.GenerateToken(safeUsername, "User");
+                    mockToken = _tokenService.GenerateToken(newProfile.DisplayName, newProfile.Role);
                 }
                 catch (Exception tokenEx)
                 {
-                    return StatusCode(500, new { error = $"Lỗi sập tại TokenService: {tokenEx.Message}. Hãy kiểm tra xem đã cấu hình JWT Secret Key trên Render chưa!" });
+                    return StatusCode(500, new { error = $"Tài khoản đã tạo nhưng lỗi sập tại TokenService: {tokenEx.Message}." });
                 }
 
-                // 4. Trả về kết quả thành công cho Frontend
+                // 6. Trả về kết quả thông suốt cho Frontend
                 return Ok(new
                 {
                     token = mockToken,
                     user = new
                     {
-                        username = safeUsername,
-                        email = model.Email,
-                        role = "User"
+                        username = newProfile.DisplayName,
+                        email = newProfile.Email,
+                        role = newProfile.Role
                     }
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = $"Lỗi hệ thống tổng quát: {ex.Message}" });
+                return StatusCode(500, new { error = $"Lỗi xử lý Đăng ký trên Database: {ex.Message}" });
             }
         }
 
-        // 2. CẬP NHẬT: API ĐĂNG NHẬP -> POST: api/auth/login
+        // 2. API ĐĂNG NHẬP THẬT -> Kiểm tra đối chiếu với Database
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginModel model)
+        public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
             try
             {
                 if (model == null || (string.IsNullOrEmpty(model.Username) && string.IsNullOrEmpty(model.Email)) || string.IsNullOrEmpty(model.Password))
                 {
-                    return BadRequest(new { error = "Vui lòng điền tài khoản và mật khẩu!" });
+                    return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin tài khoản và mật khẩu!" });
                 }
 
-                // Chấp nhận đăng nhập bằng cả username lẫn email từ frontend gửi về
-                var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username : model.Email;
+                var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username.ToLower() : model.Email.ToLower();
 
-                // Đoạn này dùng để demo test luồng admin mặc định
-                if ((identifier == "admin" || identifier == "admin@gmail.com") && model.Password == "password123")
+                // Truy vấn tìm User trong bảng profiles bằng Email hoặc display_name
+                var account = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == identifier || p.DisplayName.ToLower() == identifier);
+
+                // Nếu không tìm thấy hoặc mật khẩu giải mã so khớp thất bại
+                if (account == null || !BCrypt.Net.BCrypt.Verify(model.Password, account.PasswordHash))
                 {
-                    var token = _tokenService.GenerateToken(identifier, "Admin");
-                    
-                    return Ok(new { 
-                        token = token, // Viết thường đồng bộ cho Frontend dễ đọc
-                        user = new { username = identifier, role = "Admin" }
-                    });
+                    return BadRequest(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
                 }
 
-                // Trả về BadRequest hoặc Unauthorized kèm JSON object thay vì Text thuần để bảo vệ Frontend khỏi crash
-                return BadRequest(new { error = "Sai tài khoản hoặc mật khẩu" });
+                // Đăng nhập thành công -> Sinh Token thật từ dữ liệu DB
+                var token = _tokenService.GenerateToken(account.DisplayName, account.Role);
+                
+                return Ok(new { 
+                    token = token,
+                    user = new { username = account.DisplayName, role = account.Role }
+                });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = $"Lỗi xử lý Đăng nhập trên Server: {ex.Message}" });
+                return StatusCode(500, new { error = $"Lỗi xử lý Đăng nhập trên Database: {ex.Message}" });
             }
         }
 
@@ -127,7 +154,7 @@ namespace ComicBackend.WebApi.Controllers
         }
     }
 
-    // --- Cấu trúc Models bổ sung dữ liệu trống phòng lỗi mapping ---
+    // --- Cấu trúc Models giữ nguyên để Frontend map dữ liệu ---
     public class RegisterModel
     {
         public string? Username { get; set; }
