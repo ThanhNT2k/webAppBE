@@ -1,6 +1,5 @@
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Middlewares;
-using Newtonsoft.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using ComicBackend.WebApi.Data;
 using System.Text;
@@ -8,18 +7,17 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
-    builder.Services.AddScoped<TokenService>();
-    builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// 1. Dịch vụ cơ bản
+builder.Services.AddScoped<TokenService>();
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.")));
+
+// 2. JWT Setup với kiểm tra null an toàn
 var jwtSettings = builder.Configuration.GetSection("Jwt");
-var secretKey = jwtSettings["Secret"];
+var secretKey = jwtSettings["Secret"] ?? throw new InvalidOperationException("JWT Secret is missing");
 
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 .AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
@@ -37,61 +35,32 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddControllers()
     .AddNewtonsoftJson(options =>
     {
-        // Giữ nguyên định dạng chữ thường đầu (camelCase) giống chuẩn API truyền thống
         options.SerializerSettings.ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver();
-        // Bỏ qua các vòng lặp tham chiếu nếu có
         options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
     });
 
-builder.Services.AddEndpointsApiExplorer();
-
-// Đăng ký SupabaseService dưới dạng Singleton Độc nhất
 builder.Services.AddSingleton<SupabaseService>();
-
-// Cấu hình CORS để Frontend gọi được API
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
+builder.Services.AddCors(options => {
+    options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 });
 
 var app = builder.Build();
 
-// 2. Cấu hình HTTP Request Pipeline
+// 3. Pipeline
 app.UseCors("AllowAll");
-
 app.UseHttpsRedirection();
-
 app.UseAuthentication();
-
-// Kích hoạt Custom Middleware xác thực token Supabase trước khi đi vào Controllers
-app.UseMiddleware<SupabaseAuthMiddleware>();
-
+app.UseMiddleware<SupabaseAuthMiddleware>(); // Đảm bảo Middleware này đã được sửa dùng User thay vì Profile
 app.UseAuthorization();
-
 app.MapControllers();
+app.MapGet("/health", () => Results.Ok(new { status = "OK" }));
 
-app.MapGet("/health", () => Results.Ok(new { status = "OK", message = "C# ASP.NET Core Backend is running perfectly!" }));
-// Đặt đoạn này ngay trước app.Run(); trong file Program.cs
+// 4. Migration tự động
 using (var scope = app.Services.CreateScope())
 {
-    var services = scope.ServiceProvider;
-    try
-    {
-        var context = services.GetRequiredService<ApplicationDbContext>(); // Thay bằng tên DbContext của bạn
-        if (context.Database.GetPendingMigrations().Any())
-        {
-            context.Database.Migrate();
-            Console.WriteLine("-> Tự động khởi tạo và cập nhật cấu trúc bảng thành công trên Supabase!");
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"-> Lỗi tự động cập nhật Database: {ex.Message}");
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    if (db.Database.GetPendingMigrations().Any()) {
+        db.Database.Migrate();
     }
 }
 

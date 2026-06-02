@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ComicBackend.WebApi.Data;
+using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
+using static Postgrest.Constants;
 using System;
 using System.Threading.Tasks;
 
@@ -12,159 +12,95 @@ namespace ComicBackend.WebApi.Controllers
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
+        private readonly SupabaseService _supabase;
         private readonly TokenService _tokenService;
-        private readonly ApplicationDbContext _context; // Khai báo DbContext
 
-        // Inject cả TokenService và ApplicationDbContext vào đây
-        public AuthController(TokenService tokenService, ApplicationDbContext context)
+        public AuthController(SupabaseService supabase, TokenService tokenService)
         {
+            _supabase = supabase;
             _tokenService = tokenService;
-            _context = context;
         }
 
-        // 1. API ĐĂNG KÝ THẬT -> Ghi vào bảng profiles trong DB
+        // 1. API ĐĂNG KÝ
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
+            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
+                return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin!" });
+
             try
             {
-                // 1. Kiểm tra dữ liệu đầu vào từ Frontend
-                if (model == null)
-                {
-                    return BadRequest(new { error = "Dữ liệu gửi lên bị rỗng (null)!" });
-                }
+                // Kiểm tra xem đã tồn tại chưa bằng Supabase SDK
+                var existing = await _supabase.Client
+                    .From<User>()
+                    .Filter(x => x.Email, Operator.Equals, model.Email.ToLower())
+                    .Get();
 
-                if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
-                {
-                    return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin Email và Mật khẩu!" });
-                }
+                if (existing.Models.Any())
+                    return BadRequest(new { error = "Email này đã được đăng ký!" });
 
-                // Xử lý display_name an toàn nếu frontend gửi trống
-                string safeDisplayName = !string.IsNullOrEmpty(model.Username) 
-                    ? model.Username 
-                    : model.Email.Split('@')[0];
-
-                // 2. Kiểm tra trùng lặp Email hoặc DisplayName trong bảng profiles
-                if (await _context.Profiles.AnyAsync(p => p.Email == model.Email.ToLower()))
-                {
-                    return BadRequest(new { error = "Email này đã được đăng ký sử dụng!" });
-                }
-                if (await _context.Profiles.AnyAsync(p => p.DisplayName == safeDisplayName))
-                {
-                    return BadRequest(new { error = "Tên hiển thị (Username) này đã tồn tại!" });
-                }
-
-                // 3. Mã hóa mật khẩu bảo mật (Cần cài package: BCrypt.Net-Next)
                 string hashedPassword = BCrypt.Net.BCrypt.HashPassword(model.Password);
 
-                // 4. Khởi tạo Object User khớp với cấu trúc bảng profiles thực tế
-                var newProfile = new User
+                var newUser = new User
                 {
-                    Id = Guid.NewGuid(), // Sinh chuỗi UUID mới hoàn toàn cho Postgres
-                    DisplayName = safeDisplayName,
+                    Id = Guid.NewGuid(),
+                    DisplayName = model.Username ?? model.Email.Split('@')[0],
                     Email = model.Email.ToLower(),
                     PasswordHash = hashedPassword,
-                    Role = "user", // ✅ Đã sửa thành "user" viết thường để vượt qua check_role constraint của Postgres
+                    Role = "user",
                     UpdatedAt = DateTime.UtcNow
                 };
 
-                // Lưu thực tế xuống Database
-                _context.Profiles.Add(newProfile);
-                await _context.SaveChangesAsync();
+                await _supabase.Client.From<User>().Insert(newUser);
 
-                // 5. Sinh mã Token từ DisplayName và Role thật vừa tạo
-                string mockToken = string.Empty;
-                try 
-                {
-                    mockToken = _tokenService.GenerateToken(newProfile.DisplayName, newProfile.Role);
-                }
-                catch (Exception tokenEx)
-                {
-                    return StatusCode(500, new { error = $"Tài khoản đã tạo nhưng lỗi sập tại TokenService: {tokenEx.Message}." });
-                }
+                string token = _tokenService.GenerateToken(newUser.DisplayName, newUser.Role);
 
-                // 6. Trả về kết quả thông suốt cho Frontend
-                return Ok(new
-                {
-                    token = mockToken,
-                    user = new
-                    {
-                        username = newProfile.DisplayName,
-                        email = newProfile.Email,
-                        role = newProfile.Role
-                    }
+                return Ok(new {
+                    token = token,
+                    user = new { username = newUser.DisplayName, email = newUser.Email, role = newUser.Role }
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = $"Lỗi xử lý Đăng ký trên Database: {ex.Message}" });
+                return StatusCode(500, new { error = ex.Message });
             }
         }
 
-        // 2. API ĐĂNG NHẬP THẬT -> Kiểm tra đối chiếu với Database
+        // 2. API ĐĂNG NHẬP
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
             try
             {
-                if (model == null || (string.IsNullOrEmpty(model.Username) && string.IsNullOrEmpty(model.Email)) || string.IsNullOrEmpty(model.Password))
-                {
-                    return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin tài khoản và mật khẩu!" });
-                }
+                var identifier = (model.Username ?? model.Email ?? "").ToLower();
 
-                var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username.ToLower() : model.Email.ToLower();
+                var response = await _supabase.Client
+                    .From<User>()
+                    .Filter(x => x.Email, Operator.Equals, identifier)
+                    .Get();
 
-                // Truy vấn tìm User trong bảng profiles bằng Email hoặc display_name (không phân biệt hoa thường)
-                var account = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == identifier || p.DisplayName.ToLower() == identifier);
+                var account = response.Models.FirstOrDefault();
 
-                // Nếu không tìm thấy hoặc mật khẩu giải mã so khớp thất bại
                 if (account == null || !BCrypt.Net.BCrypt.Verify(model.Password, account.PasswordHash))
                 {
                     return BadRequest(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
                 }
 
-                // Đăng nhập thành công -> Sinh Token thật từ dữ liệu DB
                 var token = _tokenService.GenerateToken(account.DisplayName, account.Role);
                 
                 return Ok(new { 
                     token = token,
-                    user = new { username = account.DisplayName, role = account.Role }
+                    user = new { id = account.Id, username = account.DisplayName, role = account.Role }
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = $"Lỗi xử lý Đăng nhập trên Database: {ex.Message}" });
+                return StatusCode(500, new { error = ex.Message });
             }
         }
-
-        // API yêu cầu phải có Token hợp lệ mới truy cập được
-        [HttpGet("protected-data")]
-        [Authorize] 
-        public IActionResult GetProtectedData()
-        {
-            return Ok(new { Message = "Chúc mừng! Bạn đã truy cập được dữ liệu bảo mật." });
-        }
-        
-        // API chỉ dành riêng cho Admin (Hãy chú ý đổi thành "admin" viết thường nếu DB ép buộc tương tự)
-        [HttpGet("admin-only")]
-        [Authorize(Roles = "admin")] 
-        public IActionResult GetAdminData()
-        {
-            return Ok(new { Message = "Chỉ Admin mới thấy dòng này." });
-        }
     }
 
-    public class RegisterModel
-    {
-        public string? Username { get; set; }
-        public string Email { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;
-    }
-
-    public class LoginModel
-    {
-        public string? Username { get; set; }
-        public string? Email { get; set; }
-        public string Password { get; set; } = string.Empty;
-    }
+    // Models nội bộ cho Request
+    public class RegisterModel { public string? Username { get; set; } public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
+    public class LoginModel { public string? Username { get; set; } public string? Email { get; set; } public string Password { get; set; } = string.Empty; }
 }
