@@ -64,7 +64,7 @@ namespace ComicBackend.WebApi.Controllers
                     DisplayName = safeDisplayName,
                     Email = model.Email.ToLower(),
                     PasswordHash = hashedPassword,
-                    Role = "User", // Mặc định gán Role là User
+                    Role = "user", // ✅ Đã sửa thành "user" viết thường để vượt qua check_role constraint của Postgres
                     UpdatedAt = DateTime.UtcNow
                 };
 
@@ -114,7 +114,7 @@ namespace ComicBackend.WebApi.Controllers
 
                 var identifier = !string.IsNullOrEmpty(model.Username) ? model.Username.ToLower() : model.Email.ToLower();
 
-                // Truy vấn tìm User trong bảng profiles bằng Email hoặc display_name
+                // Truy vấn tìm User trong bảng profiles bằng Email hoặc display_name (không phân biệt hoa thường)
                 var account = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == identifier || p.DisplayName.ToLower() == identifier);
 
                 // Nếu không tìm thấy hoặc mật khẩu giải mã so khớp thất bại
@@ -145,16 +145,15 @@ namespace ComicBackend.WebApi.Controllers
             return Ok(new { Message = "Chúc mừng! Bạn đã truy cập được dữ liệu bảo mật." });
         }
         
-        // API chỉ dành riêng cho Admin
+        // API chỉ dành riêng cho Admin (Hãy chú ý đổi thành "admin" viết thường nếu DB ép buộc tương tự)
         [HttpGet("admin-only")]
-        [Authorize(Roles = "Admin")] 
+        [Authorize(Roles = "admin")] 
         public IActionResult GetAdminData()
         {
             return Ok(new { Message = "Chỉ Admin mới thấy dòng này." });
         }
     }
 
-    // --- Cấu trúc Models giữ nguyên để Frontend map dữ liệu ---
     public class RegisterModel
     {
         public string? Username { get; set; }
