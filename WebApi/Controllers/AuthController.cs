@@ -1,10 +1,10 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ComicBackend.WebApi.Services;
 using ComicBackend.WebApi.Models;
-using static Postgrest.Constants;
 using System;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using Supabase.Gotrue;
 
 namespace ComicBackend.WebApi.Controllers
 {
@@ -23,48 +23,38 @@ namespace ComicBackend.WebApi.Controllers
 
         // 1. API ĐĂNG KÝ
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterModel model)
+public async Task<IActionResult> Register([FromBody] RegisterModel model)
+{
+    if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
+        return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin!" });
+
+    try
+    {
+        // Thực hiện đăng ký
+        var authResponse = await _supabase.Client.Auth.SignUp(model.Email, model.Password, new SignUpOptions {
+            Data = new Dictionary<string, object> {
+                { "username", model.Username ?? model.Email.Split('@')[0] }
+            }
+        });
+
+        // Kiểm tra kết quả
+        if (authResponse?.User != null)
         {
-            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
-                return BadRequest(new { error = "Vui lòng điền đầy đủ thông tin!" });
-
-            try
-            {
-                // Kiểm tra xem đã tồn tại chưa bằng Supabase SDK
-                var existing = await _supabase.Client
-                    .From<User>()
-                    .Filter(x => x.Email, Operator.Equals, model.Email.ToLower())
-                    .Get();
-
-                if (existing.Models.Any())
-                    return BadRequest(new { error = "Email này đã được đăng ký!" });
-
-                string hashedPassword = BCrypt.Net.BCrypt.HashPassword(model.Password);
-
-                // var newUser = new User
-                // {
-                //     Id = Guid.NewGuid(),
-                //     DisplayName = model.Username ?? model.Email.Split('@')[0],
-                //     Email = model.Email.ToLower(),
-                //     PasswordHash = hashedPassword,
-                //     Role = "user",
-                //     UpdatedAt = DateTime.UtcNow
-                // };
-
-                // await _supabase.Client.From<User>().Insert(newUser);
-
-                // string token = _tokenService.GenerateToken(newUser.DisplayName, newUser.Role);
-
-                return Ok(new {
-                    // token = token,
-                    message = "Đăng ký thành công."
-            });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = ex.Message });
-            }
+            return Ok(new { message = "Đăng ký thành công!" });
         }
+        else
+        {
+            // Thay vì dùng .Error (dễ lỗi biên dịch), hãy trả về thông báo chung
+            // hoặc log lỗi nội bộ để kiểm tra.
+            return BadRequest(new { error = "Đăng ký không thành công. Vui lòng kiểm tra lại Email/Mật khẩu." });
+        }
+    }
+    catch (Exception ex)
+    {
+        // SDK thường ném ngoại lệ ở đây nếu có lỗi từ Supabase
+        return BadRequest(new { error = "Lỗi hệ thống: " + ex.Message });
+    }
+}
 
         // 2. API ĐĂNG NHẬP
         [HttpPost("login")]
@@ -72,25 +62,21 @@ namespace ComicBackend.WebApi.Controllers
         {
             try
             {
-                var identifier = (model.Username ?? model.Email ?? "").ToLower();
+                // Đăng nhập bằng Supabase Auth
+                var response = await _supabase.Client.Auth.SignIn(model.Email, model.Password);
 
-                var response = await _supabase.Client
-                    .From<User>()
-                    .Filter(x => x.Email, Operator.Equals, identifier)
-                    .Get();
-
-                var account = response.Models.FirstOrDefault();
-
-                if (account == null || !BCrypt.Net.BCrypt.Verify(model.Password, account.PasswordHash))
-                {
-                    return BadRequest(new { error = "Tài khoản hoặc mật khẩu không chính xác!" });
+                if (response.User == null) {
+                    return BadRequest(new { error = "Sai tài khoản hoặc mật khẩu!" });
                 }
 
-                var token = _tokenService.GenerateToken(account.DisplayName, account.Role);
+                // Sau khi đăng nhập thành công, bạn có thể lấy thêm role từ bảng profiles của bạn
+                // (Giả sử bạn đã có logic lấy thông tin user trong Middleware)
+                
+                var token = _tokenService.GenerateToken(response.User.Email, "user");
                 
                 return Ok(new { 
                     token = token,
-                    user = new { id = account.Id, username = account.DisplayName, role = account.Role }
+                    user = new { id = response.User.Id, email = response.User.Email, role = "user" }
                 });
             }
             catch (Exception ex)
@@ -100,7 +86,6 @@ namespace ComicBackend.WebApi.Controllers
         }
     }
 
-    // Models nội bộ cho Request
     public class RegisterModel { public string? Username { get; set; } public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
-    public class LoginModel { public string? Username { get; set; } public string? Email { get; set; } public string Password { get; set; } = string.Empty; }
+    public class LoginModel { public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
 }
