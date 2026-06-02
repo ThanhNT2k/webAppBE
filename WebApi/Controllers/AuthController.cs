@@ -58,32 +58,34 @@ public async Task<IActionResult> Register([FromBody] RegisterModel model)
 
         // 2. API ĐĂNG NHẬP
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginModel model)
-        {
-            try
-            {
-                // Đăng nhập bằng Supabase Auth
-                var response = await _supabase.Client.Auth.SignIn(model.Email, model.Password);
+public async Task<IActionResult> Login([FromBody] LoginModel model)
+{
+    // Debug: Kiểm tra xem model có nhận được dữ liệu không
+    if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.Password))
+        return BadRequest(new { error = "Email và Mật khẩu không được để trống!" });
 
-                if (response.User == null) {
-                    return BadRequest(new { error = "Sai tài khoản hoặc mật khẩu!" });
-                }
+    try
+    {
+        // Đảm bảo truyền đúng Email và Password vào hàm SignIn
+        var response = await _supabase.Client.Auth.SignIn(model.Email, model.Password);
 
-                // Sau khi đăng nhập thành công, bạn có thể lấy thêm role từ bảng profiles của bạn
-                // (Giả sử bạn đã có logic lấy thông tin user trong Middleware)
-                
-                var token = _tokenService.GenerateToken(response.User.Email, "user");
-                
-                return Ok(new { 
-                    token = token,
-                    user = new { id = response.User.Id, email = response.User.Email, role = "user" }
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = ex.Message });
-            }
+        if (response?.User == null) {
+            return BadRequest(new { error = "Đăng nhập thất bại: Tài khoản hoặc mật khẩu không chính xác!" });
         }
+        
+        // Tạo token sau khi đăng nhập thành công
+        var token = _tokenService.GenerateToken(response.User.Email, "user");
+        
+        return Ok(new { 
+            token = token,
+            user = new { id = response.User.Id, email = response.User.Email, role = "user" }
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new { error = "Lỗi server: " + ex.Message });
+    }
+}
     }
 
     public class RegisterModel { public string? Username { get; set; } public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
